@@ -1,4 +1,4 @@
-#define FUSE_USE_VERSION 31
+#define FUSE_USE_VERSION 29
 #define _FILE_OFFSET_BITS 64
 #include <fuse.h>
 #include<unistd.h>
@@ -6,12 +6,18 @@
 #include<fstream>
 #include<sys/socket.h>
 #include<sys/un.h>
-#include<chrono>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <cstring>
+#include <cerrno>
 
 using namespace std;
 
-const char *SOCKET_PATH = "/tmp/ransomeware_defense.lock";
+const char *SOCKET_PATH = "/tmp/ransomware_defense.lock";
+const char *BACKING_STORE = "/tmp/backing_store";
 pid_t ML_DAEMON_PID = 0;
+
 
 extern int check_ipc_for_response();
 
@@ -77,6 +83,85 @@ int query_ml_daemon_with_timeout(const char* buf, size_t size, int timeout_ms){
     // }
 }
 
+void translate_path(char fpath[PATH_MAX], const char* path){
+    strcpy(fpath,  BACKING_STORE);
+    strncat(fpath, path, PATH_MAX - strlen(BACKING_STORE) - 1);
+}
+
+static int ransomware_proof_getattr(const char* path, struct stat* stbuf){
+    char fpath[PATH_MAX];
+    translate_path(fpath, path);
+
+    int res = lstat(fpath, stbuf);
+    if(res == -1){
+        return -errno;
+    }
+    return 0;
+}
+
+
+//to be studied
+static int ransomware_proof_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi){
+    char fpath[PATH_MAX];
+    translate_path(fpath, path);
+
+    DIR *dp = opendir(path);
+    if(dp == NULL){
+        return -errno;
+    }
+
+    struct dirent *de;
+    while((de = readdir(dp)) != NULL){
+        struct stat st;
+        memset(&st, 0, sizeof(st));
+        st.st_ino = de->d_ino;
+        st.st_mode = de->d_type << 12;
+
+        if(filler(buf, de->d_name, &st, 0))
+            break;
+    }
+
+    closedir(dp);
+    return 0;
+}
+
+static int ransomware_proof_open(const char *path, struct fuse_file_info *fi) {
+    char fpath[PATH_MAX];
+    translate_path(fpath, path);
+
+    int fd = open(fpath, fi->flags);
+    if(fd == -1){
+        return -errno;
+    }
+
+    fi->fh = fd;
+    return 0;
+}
+
+static int ransomware_proof_read(const char* path, char* buf, size_t size, off_t offset, struct fuse_file_info* fi){
+    int res = pread(fi->fh, buf, size, offset);
+    if(res == -1){
+        res= -errno;
+    }
+    return res;
+}
+
+static int ransomware_proof_create(const char* path, mode_t mode , struct fuse_file_info *fi){
+    char fpath[PATH_MAX];
+    translate_path(fpath, path);
+
+    int fd = open(fpath, fi->flags | O_CREAT, mode);
+
+    if(fd == -1){
+        return -errno;
+    }
+    fi->fh = fd;
+
+    return 0;
+}
+
+
+
 static int ransomware_proof_write(const char* path, const char* buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     pid_t calling_pid = fuse_get_context()->pid;
 
@@ -88,11 +173,11 @@ static int ransomware_proof_write(const char* path, const char* buf, size_t size
     int verdict = query_ml_daemon_with_timeout(buf, size, 500);
 
     if(verdict == 1){
-        cerr<<"[ALERT]! Ransomeware Detected on PID"<< calling_pid << "! Blocking write."<<endl;
+        cerr<<"[ALERT]! Ransomware Detected on PID"<< calling_pid << "! Blocking write."<<endl;
         return -EACCES;
     }
     else if(verdict == -1) {
-        cerr<<"[FAIL-SAFE] Timeout occured. Allowing write to prevent system Freeze"<<endl;
+        cerr<<"[FAIL-SAFE] Timeout occurred. Allowing write to prevent system Freeze"<<endl;
         return pwrite(fi->fh, buf, size, offset);
     }
 
@@ -102,7 +187,14 @@ static int ransomware_proof_write(const char* path, const char* buf, size_t size
 static struct fuse_operations rfs_oper={};
 
 int main(int argc, char* argv[]){
+    rfs_oper.getattr = ransomware_proof_getattr;
+    rfs_oper.readdir = ransomware_proof_readdir;
+    rfs_oper.open = ransomware_proof_open;
+    rfs_oper.read = ransomware_proof_read;
+    rfs_oper.create = ransomware_proof_create;
+
     rfs_oper.write = ransomware_proof_write;
+
 
     load_daemon_pid();
 
