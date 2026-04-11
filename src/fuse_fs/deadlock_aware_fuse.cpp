@@ -22,7 +22,7 @@ pid_t ML_DAEMON_PID = 0;
 extern int check_ipc_for_response();
 
 void load_daemon_pid(){
-    ifstream pid_file("tmp/ml_daemon.pid");
+    ifstream pid_file("/tmp/ml_daemon.pid");
     if(pid_file.is_open()){
         pid_file >> ML_DAEMON_PID;
     }
@@ -105,7 +105,7 @@ static int ransomware_proof_readdir(const char* path, void* buf, fuse_fill_dir_t
     char fpath[PATH_MAX];
     translate_path(fpath, path);
 
-    DIR *dp = opendir(path);
+    DIR *dp = opendir(fpath);
     if(dp == NULL){
         return -errno;
     }

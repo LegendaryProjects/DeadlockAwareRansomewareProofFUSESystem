@@ -3,9 +3,9 @@ import os
 import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../ml_pipeline/feature_extraction')))
-from entropy_calc import calculate_shannon_entropy
+from entropy_calc import calculate_shannon_entropy, calculate_chi_square
 
-SOCKET_PATH = "/tmp/ransomeware_defense.sock"
+SOCKET_PATH = "/tmp/ransomware_defense.sock"
 
 def start_daemon():
     with open("/tmp/ml_daemon.pid", "w") as f:
@@ -29,8 +29,9 @@ def start_daemon():
                 continue
             
             entropy = calculate_shannon_entropy(data_buffer)
+            chi_square = calculate_chi_square(data_buffer)
             
-            if entropy > 7.8:
+            if entropy > 7.95 and (150 < chi_square < 350):
                 print(f"[Alert] high entropy activity detected! Classifying as malicious.")
                 conn.sendall(b"1")
             else:
