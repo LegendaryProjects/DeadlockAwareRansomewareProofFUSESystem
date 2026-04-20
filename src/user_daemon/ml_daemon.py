@@ -31,6 +31,8 @@ def start_daemon():
             entropy = calculate_shannon_entropy(data_buffer)
             chi_square = calculate_chi_square(data_buffer)
             
+            print(f"[*] Scanned File -> Entropy: {entropy:.2f} | Chi-Square: {chi_square:.2f}")
+
             if entropy > 7.95 and (150 < chi_square < 350):
                 print(f"[Alert] high entropy activity detected! Classifying as malicious.")
                 conn.sendall(b"1")

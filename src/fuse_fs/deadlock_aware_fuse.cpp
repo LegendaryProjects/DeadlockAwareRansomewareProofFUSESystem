@@ -7,14 +7,20 @@
 #include<sys/socket.h>
 #include<sys/un.h>
 #include <dirent.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <cstring>
 #include <cerrno>
+#include <vector>
+#include <string>
+#include <algorithm>
 
 using namespace std;
 
-const char *SOCKET_PATH = "/tmp/ransomware_defense.lock";
+vector<string> HONEYFILES;
+
+const char *SOCKET_PATH = "/tmp/ransomware_defense.sock";
 const char *BACKING_STORE = "/tmp/backing_store";
 pid_t ML_DAEMON_PID = 0;
 
@@ -25,6 +31,16 @@ void load_daemon_pid(){
     ifstream pid_file("/tmp/ml_daemon.pid");
     if(pid_file.is_open()){
         pid_file >> ML_DAEMON_PID;
+    }
+}
+
+void load_honeyfiles() {
+    ifstream h_file("/tmp/honeyfiles.txt");
+    string line;
+    if (h_file.is_open()) {
+        while (getline(h_file, line)) {
+            HONEYFILES.push_back(line);
+        }
     }
 }
 
@@ -160,10 +176,22 @@ static int ransomware_proof_create(const char* path, mode_t mode , struct fuse_f
     return 0;
 }
 
-
+int ransomware_proof_truncate(const char *path, off_t size) {
+    return 0;
+}
 
 static int ransomware_proof_write(const char* path, const char* buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     pid_t calling_pid = fuse_get_context()->pid;
+
+    string current_path(path);
+    if (find(HONEYFILES.begin(), HONEYFILES.end(), current_path) != HONEYFILES.end()) {
+
+        cerr << "\n\n[CRITICAL] TRIPWIRE TRIGGERED! Process touched a Honeyfile.\n";
+        cerr << "[MITIGATION] Bypassing ML. Instant SIGKILL to PID: " << calling_pid << "\n\n";
+        
+        kill(calling_pid, SIGKILL);
+        return -EACCES; 
+    }
 
     if(calling_pid == ML_DAEMON_PID){
         return pwrite(fi->fh, buf, size, offset);
@@ -171,11 +199,24 @@ static int ransomware_proof_write(const char* path, const char* buf, size_t size
 
 
     int verdict = query_ml_daemon_with_timeout(buf, size, 500);
+  
+    if (verdict == 1) {
+        cerr << "\n\n[CRITICAL ALERT] Ransomware behavior detected!\n";
+        cerr << "[MITIGATION] Blocking write to file: " << path << "\n";
+        cerr << "[MITIGATION] Sending SIGKILL to terminate PID: " << calling_pid << "\n\n";
+        
+        int kill_status = kill(calling_pid, SIGKILL);
+        
+        if (kill_status == 0) {
+            cerr << "[SUCCESS] Rogue process " << calling_pid << " successfully terminated.\n";
+        } else {
+            cerr << "[WARNING] Failed to terminate process. It may already be dead or requires root.\n";
+        }
 
-    if(verdict == 1){
-        cerr<<"[ALERT]! Ransomware Detected on PID"<< calling_pid << "! Blocking write."<<endl;
         return -EACCES;
     }
+
+
     else if(verdict == -1) {
         cerr<<"[FAIL-SAFE] Timeout occurred. Allowing write to prevent system Freeze"<<endl;
         return pwrite(fi->fh, buf, size, offset);
@@ -192,11 +233,12 @@ int main(int argc, char* argv[]){
     rfs_oper.open = ransomware_proof_open;
     rfs_oper.read = ransomware_proof_read;
     rfs_oper.create = ransomware_proof_create;
-
+    rfs_oper.truncate = ransomware_proof_truncate;
     rfs_oper.write = ransomware_proof_write;
 
 
     load_daemon_pid();
+    load_honeyfiles();
 
     cout<<"[*] Starting Deadlock Aware FUSE. Whitelisting PID: "<<ML_DAEMON_PID<<endl;
 

@@ -8,11 +8,11 @@ mkdir -p /tmp/secure_mount
 mkdir -p /tmp/backing_store
 
 echo "[*] Compiling C++ FUSE Driver."
-g++ -Wall ../src/fuse_fs/deadlock_aware_fuse.cpp `pkg-config fuse3 --cflags --libs` -o ransomware_fuse
+g++ -Wall /src/fuse_fs/deadlock_aware_fuse.cpp `pkg-config fuse3 --cflags --libs` -o ransomware_fuse
 
 echo "[*] Starting User-Mode ML Daemon."
 
-python3 ../src/user_daemon/ml_daemon.py &
+python3 /src/user_daemon/ml_daemon.py &
 DAEMON_PROCESS=$!
 
 sleep 2
