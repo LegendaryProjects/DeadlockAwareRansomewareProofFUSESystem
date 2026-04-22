@@ -5,10 +5,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
-
 # Import your actual feature extraction logic
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../feature_extraction')))
-from entropy_calc import calculate_shannon_entropy, calculate_chi_square
+from entropy_calc import calculate_shannon_entropy, calculate_chi_square, calculate_monobit, calculate_poker_test, calculate_cumulative_sums, extract_mac_metadata
 
 # Directory configurations
 BASE_DIR = os.path.dirname(__file__)
@@ -32,61 +31,65 @@ def extract_features_from_directory(directory_path, label):
         return X, y
 
     print(f"[*] Processing files in {directory_path} (Label: {label})...")
-    
+
     for filename in os.listdir(directory_path):
         filepath = os.path.join(directory_path, filename)
-        
+     
         if os.path.isfile(filepath):
             try:
                 with open(filepath, 'rb') as f:
                     # Read only the first 64KB to mimic the kernel IRP_MJ_WRITE intercept
-                    data_buffer = f.read(CHUNK_SIZE)
-                    
+                    data_buffer = f.read(CHUNK_SIZE)            
+
                     if len(data_buffer) < 512:
                         continue # Skip incredibly small files that skew entropy
-                    
+
                     entropy = calculate_shannon_entropy(data_buffer)
                     chi_square = calculate_chi_square(data_buffer)
-                    
-                    X.append([entropy, chi_square])
+                    monobit_dist = calculate_monobit(data_buffer)
+                    poker_stat = calculate_poker_test(data_buffer)
+                    cumul_sums = calculate_cumulative_sums(data_buffer)
+                    mac_delta = extract_mac_metadata(filepath)
+
+                    X.append([entropy, chi_square, monobit_dist, poker_stat, cumul_sums, mac_delta])
                     y.append(label)
+
             except Exception as e:
-                # Handle permission errors or corrupted files gracefully
-                pass 
-                
+                raise e
+
     return X, y
 
 def train_model():
     X = []
     y = []
-    
     # 1. Load Benign and Compressed Data (Label 0: Safe)
     benign_dir = os.path.join(DATASETS_DIR, 'benign')
     X_benign, y_benign = extract_features_from_directory(benign_dir, 0)
-    
+
     compressed_dir = os.path.join(DATASETS_DIR, 'compressed')
     X_comp, y_comp = extract_features_from_directory(compressed_dir, 0)
-    
+
     # 2. Load Malicious Ransomware Data (Label 1: Malicious)
     malicious_dir = os.path.join(DATASETS_DIR, 'malicious')
-    X_mal, y_mal = extract_features_from_directory(malicious_dir, 1)
-    
+    X_mal, y_mal = extract_features_from_directory(malicious_dir, 1) 
+
     # Combine all extracted features
     X.extend(X_benign + X_comp + X_mal)
-    y.extend(y_benign + y_comp + y_mal)
-    
+    y.extend(y_benign + y_comp + y_mal) 
+
     if not X:
         print("[ERROR] No data found! Please populate the datasets/ folders.")
         sys.exit(1)
-        
+
     X = np.array(X)
     y = np.array(y)
 
     print(f"\n[*] Total samples extracted: {len(X)}")
     print("[*] Splitting data into training and testing sets...")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     print("[*] Training Random Forest Classifier...")
+
     # 100 decision trees is the optimal balance for accuracy vs. inference speed
     rf_model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
     rf_model.fit(X_train, y_train)
